@@ -14,6 +14,7 @@
 #    under the License.
 
 import os
+import pwd
 
 import mock
 import netaddr
@@ -715,7 +716,10 @@ class TestDnsmasq(TestBase):
         # or backwards-compatibility
         expected_pid_file = '/dhcp/%s/pid' % network.id
 
-        expected_env = {'NEUTRON_NETWORK_ID': network.id}
+        hostsfile_name = '/dhcp/%s/host' % network.id
+        expected_env = {
+            'HOSTS_FILE': hostsfile_name,
+            'NEUTRON_NETWORK_ID': network.id}
         expected = [
             'dnsmasq',
             '--no-hosts',
@@ -725,9 +729,12 @@ class TestDnsmasq(TestBase):
             '--interface=tap0',
             '--except-interface=lo',
             '--pid-file=%s' % expected_pid_file,
-            '--dhcp-hostsfile=/dhcp/%s/host' % network.id,
+            '--dhcp-hostsfile=%s' % hostsfile_name,
             '--addn-hosts=/dhcp/%s/addn_hosts' % network.id,
             '--dhcp-optsfile=/dhcp/%s/opts' % network.id,
+            '--dhcp-script=/usr/local/bin/'
+            'neutron-dhcp-agent-dnsmasq-lease-init',
+            '--dhcp-scriptuser=%s' % pwd.getpwuid(os.getuid()).pw_name,
             '--leasefile-ro']
 
         seconds = ''

@@ -16,6 +16,7 @@
 import abc
 import collections
 import os
+import pwd
 import re
 import shutil
 import socket
@@ -287,6 +288,7 @@ class Dnsmasq(DhcpLocalProcess):
 
     NEUTRON_NETWORK_ID_KEY = 'NEUTRON_NETWORK_ID'
     NEUTRON_RELAY_SOCKET_PATH_KEY = 'NEUTRON_RELAY_SOCKET_PATH'
+    HOSTS_FILE_KEY = 'HOSTS_FILE'
 
     @classmethod
     def check_version(cls):
@@ -317,6 +319,8 @@ class Dnsmasq(DhcpLocalProcess):
             '--dhcp-hostsfile=%s' % self.get_conf_file_name('host'),
             '--addn-hosts=%s' % self.get_conf_file_name('addn_hosts'),
             '--dhcp-optsfile=%s' % self.get_conf_file_name('opts'),
+            '--dhcp-script=%s' % self._lease_script_path(),
+            '--dhcp-scriptuser=%s' % pwd.getpwuid(os.getuid()).pw_name,
             '--leasefile-ro',
         ]
 
@@ -391,13 +395,15 @@ class Dnsmasq(DhcpLocalProcess):
         self._output_config_files()
 
         pid_filename = self.get_conf_file_name('pid')
+        host_filename = self.get_conf_file_name('host')
 
         self.process_monitor.enable(
             uuid=self.network.id,
             cmd_callback=self._build_cmdline_callback,
             namespace=self.network.namespace,
             service=DNSMASQ_SERVICE_NAME,
-            cmd_addl_env={self.NEUTRON_NETWORK_ID_KEY: self.network.id},
+            cmd_addl_env={self.HOSTS_FILE_KEY: host_filename,
+                          self.NEUTRON_NETWORK_ID_KEY: self.network.id},
             reload_cfg=reload_with_HUP,
             pid_file=pid_filename)
 
@@ -450,8 +456,7 @@ class Dnsmasq(DhcpLocalProcess):
                     addr_mode = v6_nets[alloc.subnet_id].ipv6_address_mode
                     if addr_mode != constants.DHCPV6_STATEFUL:
                         continue
-                hostname = 'host-%s' % alloc.ip_address.replace(
-                    '.', '-').replace(':', '-')
+                hostname = commonutils.get_dhcp_host_id(alloc.ip_address)
                 fqdn = hostname
                 if self.conf.dhcp_domain:
                     fqdn = '%s.%s' % (fqdn, self.conf.dhcp_domain)
@@ -784,6 +789,11 @@ class Dnsmasq(DhcpLocalProcess):
             sock.connect(dhcp_relay_socket)
             sock.send(jsonutils.dumps(data))
             sock.close()
+
+    @staticmethod
+    def _lease_script_path():
+        return os.path.join(os.path.dirname(sys.argv[0]),
+                            'neutron-dhcp-agent-dnsmasq-lease-init')
 
 
 class DeviceManager(object):

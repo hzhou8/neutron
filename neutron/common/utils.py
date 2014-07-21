@@ -313,6 +313,11 @@ def get_dhcp_agent_device_id(network_id, host):
     return 'dhcp%s-%s' % (host_uuid, network_id)
 
 
+def get_dhcp_host_id(ip_address):
+    return 'host-%s' % ip_address.replace(
+        '.', '-').replace(':', '-')
+
+
 def cpu_count():
     try:
         return multiprocessing.cpu_count()
