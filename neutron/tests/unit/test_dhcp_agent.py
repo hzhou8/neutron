@@ -240,6 +240,21 @@ class TestDhcpAgent(base.BaseTestCase):
             trace_level='warning',
             expected_sync=False)
 
+    def test_get_driver_property(self):
+        network = mock.Mock()
+        network.id = '1'
+
+        dhcp = dhcp_agent.DhcpAgent(HOSTNAME)
+        self.driver.return_value.bar = 'foo'
+        prop_value = dhcp.get_driver_property('bar', network)
+        self.assertEqual(prop_value, 'foo')
+        self.driver.assert_called_once_with(cfg.CONF,
+                                            mock.ANY,
+                                            'sudo',
+                                            mock.ANY,
+                                            mock.ANY)
+
+
     def _test_sync_state_helper(self, known_networks, active_networks):
         with mock.patch(DHCP_PLUGIN) as plug:
             mock_plugin = mock.Mock()

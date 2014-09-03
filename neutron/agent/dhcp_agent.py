@@ -113,6 +113,36 @@ class DhcpAgent(manager.Manager):
         self.sync_state()
         self.periodic_resync()
 
+    def get_driver_property(self, prop, network):
+        try:
+            # the Driver expects something that is duck typed similar to
+            # the base models.
+            driver = self.dhcp_driver_cls(self.conf,
+                                          network,
+                                          self.root_helper,
+                                          self.dhcp_version,
+                                          self.plugin_rpc)
+
+            prop_value = getattr(driver, prop)
+            return prop_value
+
+        except exceptions.Conflict:
+            # No need to resync here, the agent will receive the event related
+            # to a status update for the network
+            LOG.warning(_('Unable to get %(property) for %(net_id)s: there is '
+                          'a conflict with its current state; please check '
+                          'that the network and/or its subnet(s) still exist.')
+                        % {'net_id': network.id, 'property': prop})
+        except Exception as e:
+            self.schedule_resync(e)
+            if (isinstance(e, n_rpc.RemoteError)
+                and e.exc_type == 'NetworkNotFound'
+                or isinstance(e, exceptions.NetworkNotFound)):
+                LOG.warning(_("Network %s has been deleted."), network.id)
+            else:
+                LOG.exception(_('Unable to get %(property) for %(net_id)s.')
+                              % {'net_id': network.id, 'property': prop})
+
     def call_driver(self, action, network, **action_kwargs):
         """Invoke an action on a DHCP driver instance."""
         LOG.debug(_('Calling driver for network: %(net)s action: %(action)s'),
@@ -176,11 +206,41 @@ class DhcpAgent(manager.Manager):
             self.schedule_resync(e)
             LOG.exception(_('Unable to sync network state.'))
 
+    def needs_resync_child_processes(self):
+        """Check if sub-processes for each network instance is alive."""
+        for network_id in self.cache.get_network_ids():
+            network = self.cache.get_network_by_id(network_id)
+            active = self.get_driver_property('active', network)
+
+            if not active:
+                LOG.warn(_('DHCP server instance not active for network %s, '
+                           'will resync'), network_id)
+                return True
+
+            elif (self.conf.use_namespaces and
+                  self.conf.enable_isolated_metadata):
+                pm = external_process.ProcessManager(
+                    self.conf,
+                    network.id,
+                    self.root_helper,
+                    network.namespace)
+                active = pm.active
+                if not active:
+                    LOG.warn(_('Metadata proxy not active for network %s, '
+                               'will resync'), network_id)
+                    return True
+
+        return False
+
     @utils.exception_logger()
     def _periodic_resync_helper(self):
         """Resync the dhcp state at the configured interval."""
         while True:
             eventlet.sleep(self.conf.resync_interval)
+
+            if self.needs_resync_child_processes():
+                self.schedule_resync('Child process not alive')
+
             if self.needs_resync_reasons:
                 # be careful to avoid a race with additions to list
                 # from other threads
@@ -213,15 +273,21 @@ class DhcpAgent(manager.Manager):
 
     @utils.exception_logger()
     def safe_configure_dhcp_for_network(self, network):
+        network_added = False
         try:
-            self.configure_dhcp_for_network(network)
+            network_added = self.configure_dhcp_for_network(network)
         except (exceptions.NetworkNotFound, RuntimeError):
             LOG.warn(_('Network %s may have been deleted and its resources '
                        'may have already been disposed.'), network.id)
 
+        # Remove possible old network from cache if not configured
+        if (not network_added and
+            self.cache.get_network_by_id(network.id)):
+            self.cache.remove(network)
+
     def configure_dhcp_for_network(self, network):
         if not network.admin_state_up:
-            return
+            return False
 
         for subnet in network.subnets:
             if subnet.enable_dhcp:
@@ -230,7 +296,10 @@ class DhcpAgent(manager.Manager):
                         self.conf.enable_isolated_metadata):
                         self.enable_isolated_metadata_proxy(network)
                     self.cache.put(network)
-                break
+                    return True
+                return False
+
+        return False
 
     def disable_dhcp_helper(self, network_id):
         """Disable DHCP for a network known to the agent."""
