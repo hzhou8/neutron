@@ -74,21 +74,13 @@ class DhcpAgentNotifyAPI(object):
                          'events.'), network['id'])
         return new_agents + existing_agents
 
-    def _get_enabled_agents(self, context, network, agents, method, payload):
-        """Get the list of agents whose admin_state is UP."""
+    def _get_enabled_active_agents(self, context,
+                                   network, agents, method, payload):
+        """Get the list of agents whose admin_state is UP and is active."""
         network_id = network['id']
-        enabled_agents = [x for x in agents if x.admin_state_up]
-        active_agents = [x for x in agents if x.is_active]
-        len_enabled_agents = len(enabled_agents)
-        len_active_agents = len(active_agents)
-        if len_active_agents < len_enabled_agents:
-            LOG.warn(_LW("Only %(active)d of %(total)d DHCP agents associated "
-                         "with network '%(net_id)s' are marked as active, so "
-                         "notifications may be sent to inactive agents."),
-                     {'active': len_active_agents,
-                      'total': len_enabled_agents,
-                      'net_id': network_id})
-        if not enabled_agents:
+        enabled_active_agents = [x for x in agents
+                                 if x.admin_state_up and x.is_active]
+        if not enabled_active_agents:
             num_ports = self.plugin.get_ports_count(
                 context, {'network_id': [network_id]})
             notification_required = (
@@ -100,7 +92,7 @@ class DhcpAgentNotifyAPI(object):
                           {'method': method,
                            'net_id': network_id,
                            'payload': payload})
-        return enabled_agents
+        return enabled_active_agents
 
     def _is_reserved_dhcp_port(self, port):
         return port.get('device_id') == constants.DEVICE_ID_RESERVED_DHCP_PORT
@@ -132,9 +124,9 @@ class DhcpAgentNotifyAPI(object):
             if schedule_required:
                 agents = self._schedule_network(admin_ctx, network, agents)
 
-            enabled_agents = self._get_enabled_agents(
+            enabled_active_agents = self._get_enabled_active_agents(
                 context, network, agents, method, payload)
-            for agent in enabled_agents:
+            for agent in enabled_active_agents:
                 self._cast_message(
                     context, method, payload, agent.host, agent.topic)
 

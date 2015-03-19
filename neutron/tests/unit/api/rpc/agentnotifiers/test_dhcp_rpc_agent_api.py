@@ -76,24 +76,30 @@ class TestDhcpAgentNotifyAPI(base.BaseTestCase):
                                      new_agents=None, existing_agents=[],
                                      expected_casts=0, expected_warnings=1)
 
-    def _test__get_enabled_agents(self, network,
-                                  agents=None, port_count=0,
-                                  expected_warnings=0, expected_errors=0):
+    def _test__get_enabled_active_agents(self, network,
+                                         agents=None,
+                                         expected_agents=None,
+                                         port_count=0,
+                                         expected_warnings=0,
+                                         expected_errors=0):
         self.notifier.plugin.get_ports_count.return_value = port_count
-        enabled_agents = self.notifier._get_enabled_agents(
+        enabled_active_agents = self.notifier._get_enabled_active_agents(
             mock.ANY, network, agents, mock.ANY, mock.ANY)
-        self.assertEqual(agents, enabled_agents)
+        self.assertEqual(expected_agents, enabled_active_agents)
         self.assertEqual(expected_warnings, self.mock_log.warn.call_count)
         self.assertEqual(expected_errors, self.mock_log.error.call_count)
 
-    def test__get_enabled_agents(self):
+    def test__get_enabled_active_agents(self):
         agent = agents_db.Agent()
         agent.admin_state_up = True
         agent.heartbeat_timestamp = timeutils.utcnow()
         network = {'id': 'foo_network_id'}
-        self._test__get_enabled_agents(network, agents=[agent])
+        agents = [agent]
+        self._test__get_enabled_active_agents(network,
+                                              agents=agents,
+                                              expected_agents=agents)
 
-    def test__get_enabled_agents_with_inactive_ones(self):
+    def test__get_enabled_active_agents_with_inactive_ones(self):
         agent1 = agents_db.Agent()
         agent1.admin_state_up = True
         agent1.heartbeat_timestamp = timeutils.utcnow()
@@ -102,14 +108,18 @@ class TestDhcpAgentNotifyAPI(base.BaseTestCase):
         # This is effectively an inactive agent
         agent2.heartbeat_timestamp = datetime.datetime(2000, 1, 1, 0, 0)
         network = {'id': 'foo_network_id'}
-        self._test__get_enabled_agents(network,
-                                       agents=[agent1, agent2],
-                                       expected_warnings=1, expected_errors=0)
+        self._test__get_enabled_active_agents(network,
+                                              agents=[agent1, agent2],
+                                              expected_agents=[agent1],
+                                              expected_warnings=0,
+                                              expected_errors=0)
 
-    def test__get_enabled_agents_with_notification_required(self):
+    def test__get_enabled_active_agents_with_notification_required(self):
         network = {'id': 'foo_network_id', 'subnets': ['foo_subnet_id']}
-        self._test__get_enabled_agents(network, [], port_count=20,
-                                       expected_warnings=0, expected_errors=1)
+        self._test__get_enabled_active_agents(network, [], [],
+                                              port_count=20,
+                                              expected_warnings=0,
+                                              expected_errors=1)
 
     def test__notify_agents_fanout_required(self):
         self.notifier._notify_agents(mock.ANY,
@@ -120,7 +130,8 @@ class TestDhcpAgentNotifyAPI(base.BaseTestCase):
     def _test__notify_agents(self, method,
                              expected_scheduling=0, expected_casts=0):
         with mock.patch.object(self.notifier, '_schedule_network') as f:
-            with mock.patch.object(self.notifier, '_get_enabled_agents') as g:
+            with mock.patch.object(self.notifier,
+                                   '_get_enabled_active_agents') as g:
                 agent = agents_db.Agent()
                 agent.admin_state_up = True
                 agent.heartbeat_timestamp = timeutils.utcnow()
